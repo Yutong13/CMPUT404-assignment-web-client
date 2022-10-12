@@ -17,7 +17,7 @@
 # Do not use urllib's HTTP GET and POST mechanisms.
 # Write your own HTTP GET and POST
 # The point is to understand what you have to send and get experience with it
-
+# Modified by Yutong Liu at 2022/10/8th
 import sys
 import socket
 import re
@@ -44,7 +44,15 @@ class HTTPClient(object):
         return None
 
     def get_headers(self,data):
-        return None
+        headers_in_list = data.split("\n")
+        headers_in_dictionary = {}
+        for i in range(len(headers_in_list)):
+            headers_in_list[i] = headers_in_list[i].strip("\r")
+            if ":"in headers_in_list[i]:
+                parsed_header = headers_in_list[i].split(":")
+                headers_in_dictionary[parsed_header[0]] = "".join(parsed_header[0:])
+        
+        return headers_in_dictionary
 
     def get_body(self, data):
         return None
@@ -55,26 +63,81 @@ class HTTPClient(object):
     def close(self):
         self.socket.close()
 
+    def parser(self, url):
+        after_http = url.split("//")[1] # split by http//
+        host_port = after_http.split("/")[0] # split after port number
+        try:
+            host, port = host_port.split(":") # split host and port
+        except ValueError:
+            host = host_port
+            port = 80
+        return host, port
+
     # read everything from the socket
     def recvall(self, sock):
         buffer = bytearray()
         done = False
+        receive = False
         while not done:
-            part = sock.recv(1024)
-            if (part):
-                buffer.extend(part)
-            else:
-                done = not part
+            try:
+                part = sock.recv(1024)
+                if (part):
+                    buffer.extend(part)
+                    receive = True
+                elif receive:
+                    buffer.extend(part)
+                    done = not part
+            except TimeoutError:
+                break
+
+        sock.shutdown(socket.SHUT_WR)
         return buffer.decode('utf-8')
 
     def GET(self, url, args=None):
-        code = 500
+        host, port = self.parser(url)
+
+        self.connect(host, int(port))
+        self.socket.settimeout(1)
+        self.sendall(f'GET {url} HTTP/1.1\r\nHost: {host}\r\n\r\n')
+        result = self.recvall(self.socket)
+        self.close()
+
+        # parsing
+        repsonse_headers = result.split("\n")
+        code = int(repsonse_headers[0].split(" ")[1])
         body = ""
-        return HTTPResponse(code, body)
+        for header in repsonse_headers:
+            body += header
+        return HTTPResponse(code, str(body))
 
     def POST(self, url, args=None):
-        code = 500
-        body = ""
+        host, port = self.parser(url)
+
+        self.connect(host, int(port))
+        self.socket.settimeout(1)
+        if args:
+            length = len(str(args))
+        else:
+            length = 0
+            args = "" # if there's no arg
+        
+        body = args
+        if type(args) == dict:
+            body = ""
+            for key, value in args.items():
+                body += f'{key}={value}&'
+            if body:
+                body = body[:-1]
+        body.replace(" ", "%20")
+        self.sendall(f'POST {url} HTTP/1.1\r\nHost: {host}\r\nContent-Length: {len(body)}\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n{body}\r\n')
+        result = self.recvall(self.socket)
+        self.close()
+
+        repsonse_headers = result.split("\r\n")
+        code = int(repsonse_headers[0].split(" ")[1])
+        
+        body = result.split("\r\n\r\n")[1].strip()
+
         return HTTPResponse(code, body)
 
     def command(self, url, command="GET", args=None):

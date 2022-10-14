@@ -22,7 +22,7 @@ import sys
 import socket
 import re
 # you may use urllib to encode data appropriately
-import urllib.parse
+import urllib.parse as parser
 
 def help():
     print("httpclient.py [GET/POST] [URL]\n")
@@ -41,17 +41,17 @@ class HTTPClient(object):
         return None
 
     def get_code(self, data):
-        return None
+        return int(data[0].split(" ")[1])
 
     def get_headers(self,data):
-        headers_in_list = data.split("\n")
+        headers_in_list = data.split("\r\n"*2)[0].split("\r\n")
         headers_in_dictionary = {}
         for i in range(len(headers_in_list)):
-            headers_in_list[i] = headers_in_list[i].strip("\r")
+            headers_in_list[i] = headers_in_list[i].strip(" ")
             if ":"in headers_in_list[i]:
-                parsed_header = headers_in_list[i].split(":")
-                headers_in_dictionary[parsed_header[0]] = "".join(parsed_header[0:])
-        
+                header_key = headers_in_list[i].split(":")[0].lower()
+                header_value = headers_in_list[i].split(":")[1:]
+                headers_in_dictionary[header_key] = (":".join(header_value)).strip().lower()
         return headers_in_dictionary
 
     def get_body(self, data):
@@ -64,13 +64,13 @@ class HTTPClient(object):
         self.socket.close()
 
     def parser(self, url):
-        after_http = url.split("//")[1] # split by http//
-        host_port = after_http.split("/")[0] # split after port number
-        try:
-            host, port = host_port.split(":") # split host and port
-        except ValueError:
-            host = host_port
+        parsed_url = parser.urlparse(url)
+        port = parsed_url.port
+        if not parsed_url.port:
             port = 80
+        
+        host = parsed_url.hostname
+        
         return host, port
 
     # read everything from the socket
@@ -89,25 +89,24 @@ class HTTPClient(object):
                     done = not part
             except TimeoutError:
                 break
-
         sock.shutdown(socket.SHUT_WR)
         return buffer.decode('utf-8')
 
     def GET(self, url, args=None):
         host, port = self.parser(url)
+        
 
         self.connect(host, int(port))
         self.socket.settimeout(1)
-        self.sendall(f'GET {url} HTTP/1.1\r\nHost: {host}\r\n\r\n')
+        self.sendall(f'GET {url} HTTP/1.1\r\nHost: {host}\r\nContent-Type: text/html\r\n\r\n')
         result = self.recvall(self.socket)
         self.close()
 
+        
         # parsing
-        repsonse_headers = result.split("\n")
-        code = int(repsonse_headers[0].split(" ")[1])
-        body = ""
-        for header in repsonse_headers:
-            body += header
+        code = self.get_code(result.split("\r\n"))
+        body = result.split("\r\n\r\n")[1].strip()
+        
         return HTTPResponse(code, str(body))
 
     def POST(self, url, args=None):
@@ -133,8 +132,7 @@ class HTTPClient(object):
         result = self.recvall(self.socket)
         self.close()
 
-        repsonse_headers = result.split("\r\n")
-        code = int(repsonse_headers[0].split(" ")[1])
+        code = self.get_code(result.split("\r\n"))
         
         body = result.split("\r\n\r\n")[1].strip()
 
